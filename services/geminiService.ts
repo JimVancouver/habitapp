@@ -1,16 +1,29 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { HabitSuggestion, Habit } from "../types";
 
-const apiKey = process.env.API_KEY || '';
+// Robust check for API Key in browser/deployment environments
+const getApiKey = (): string => {
+  try {
+    // Check for process.env (Vercel/Node) or window.process (some polyfills)
+    const key = process.env.API_KEY;
+    return key || '';
+  } catch (e) {
+    return '';
+  }
+};
 
-// Initialize the client once. 
-// Note: In a real production app, we might handle empty API keys more gracefully in the UI.
-const ai = new GoogleGenAI({ apiKey });
+const apiKey = getApiKey();
+
+// Only initialize if we have a key to avoid crashes
+const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 const MODEL_NAME = 'gemini-3-flash-preview';
 
 export const generateHabitSuggestions = async (userGoal: string): Promise<HabitSuggestion[]> => {
-  if (!apiKey) return [];
+  if (!ai || !apiKey) {
+    console.warn("Gemini API not initialized: Missing API Key");
+    return [];
+  }
 
   const responseSchema: Schema = {
     type: Type.ARRAY,
@@ -30,19 +43,16 @@ export const generateHabitSuggestions = async (userGoal: string): Promise<HabitS
   try {
     const response = await ai.models.generateContent({
       model: MODEL_NAME,
-      contents: `Generate 5 structured habit suggestions based on this user goal: "${userGoal}". 
-      Ensure a mix of frequencies (daily, weekly) if appropriate. 
-      The targetCount should be reasonable (e.g. 1 for daily tasks, 3 for weekly gym visits).`,
+      contents: `Generate 5 structured habit suggestions based on this user goal: "${userGoal}".`,
       config: {
         responseMimeType: "application/json",
         responseSchema: responseSchema,
-        systemInstruction: "You are an expert behavioral psychologist and habit coach. Suggest specific, actionable habits.",
+        systemInstruction: "You are an expert habit coach.",
       },
     });
 
     const text = response.text;
-    if (!text) return [];
-    return JSON.parse(text) as HabitSuggestion[];
+    return text ? JSON.parse(text) : [];
   } catch (error) {
     console.error("Gemini suggestion error:", error);
     return [];
@@ -50,49 +60,33 @@ export const generateHabitSuggestions = async (userGoal: string): Promise<HabitS
 };
 
 export const getHabitMotivation = async (habit: Habit): Promise<string> => {
-  if (!apiKey) return "Keep going! You're doing great.";
+  if (!ai || !apiKey) return "Consistency is the bridge between goals and accomplishment.";
 
   try {
     const response = await ai.models.generateContent({
       model: MODEL_NAME,
-      contents: `The user has a habit: "${habit.title}". 
-      Frequency: ${habit.frequency}. 
-      Current streak: ${habit.streak}.
-      Target: ${habit.targetCount} times per ${habit.frequency.slice(0, -2)}.
-      
-      Give a short, punchy, 1-sentence motivational message or a specific tip to help them stick to it.`,
-      config: {
-        maxOutputTokens: 100,
-        temperature: 0.8,
-      }
+      contents: `Give a 1-sentence motivation for the habit: "${habit.title}". Current streak: ${habit.streak}.`,
+      config: { maxOutputTokens: 60 }
     });
-
-    return response.text || "Consistency is key!";
+    return response.text || "Keep going!";
   } catch (error) {
-    console.error("Gemini motivation error:", error);
-    return "Stay consistent!";
+    return "Stay focused on your goals!";
   }
 };
 
 export const analyzeProgress = async (habits: Habit[]): Promise<string> => {
-  if (!apiKey) return "Track your habits to see insights here.";
+  if (!ai || !apiKey || habits.length === 0) return "Add some habits and track them to see AI insights!";
   
-  // Simplified summary for the prompt
-  const summary = habits.map(h => `- ${h.title} (${h.frequency}): Streak ${h.streak}`).join('\n');
+  const summary = habits.map(h => `${h.title}: ${h.streak} day streak`).join(', ');
 
   try {
     const response = await ai.models.generateContent({
       model: MODEL_NAME,
-      contents: `Analyze this user's habit data:\n${summary}\n\nProvide a brief 3-sentence summary of their performance and one area for improvement. Be encouraging but honest.`,
-      config: {
-        maxOutputTokens: 200,
-        systemInstruction: "You are a data-driven life coach."
-      }
+      contents: `Analyze my progress: ${summary}. Give me a 2-sentence coach's perspective.`,
+      config: { maxOutputTokens: 150 }
     });
-
-    return response.text || "Good job tracking your habits.";
+    return response.text || "You're making steady progress. Keep showing up!";
   } catch (error) {
-    console.error("Gemini analysis error:", error);
-    return "Keep tracking to unlock insights.";
+    return "Your consistency is building the foundation for your future self.";
   }
 };
